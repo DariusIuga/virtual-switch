@@ -1,0 +1,10 @@
+1
+
+Pentru fiecare pachet primit, salvez interfata aferenta
+adresei mac sursa in tabela CAM.
+
+Daca adresa mac destinatie este de tip broadcast sau nu
+se regaseste inca in tabela CAM, trimit packetul pe toate
+interfetele in afara de cea de pe care a venit.
+Alftel, fac o transmisie unicast catre interfata gasita
+in tabela CAM pentru mac-ul destinatie.

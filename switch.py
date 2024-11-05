@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+import os
 import struct
 import sys
 import threading
@@ -40,6 +41,23 @@ def send_bdpu_every_sec():
 
 
 def main():
+    # Closure to send a frame to a link with the VLAN tag if necessary
+    def vlan_send_to_link(interface, length, data, vlan_id):
+        interface_name = get_interface_name(interface)
+        if interface_vlans[interface_name] == "T":
+            # This is a trunk port. Send the frame with the VLAN tag
+            print("HERE1")
+            tagged_frame = data[0:12] + create_vlan_tag(vlan_id) + data[12:]
+            send_to_link(interface, length + 4, tagged_frame)
+        elif interface_vlans[interface_names[i]] == str(vlan_id):
+            # This is an access port. Send the frame without the VLAN tag if it has the same VLAN id
+            print("HERE2")
+            send_to_link(interface, length, data)
+        else:
+            # Drop the frame
+            print("HERE3")
+            print(f"Frame dropped on interface {interface_name}")
+
     # init returns the max interface number. Our interfaces
     # are 0, 1, 2, ..., init_ret value + 1
     switch_id = sys.argv[1]
@@ -54,9 +72,29 @@ def main():
     t = threading.Thread(target=send_bdpu_every_sec)
     t.start()
 
+    interface_names = []
     # Printing interface names
     for i in interfaces:
+        interface_names.append(get_interface_name(i))
         print(get_interface_name(i))
+
+    # Initialize the VLAN id for each interface
+    config_file = os.path.join("configs", f"switch{switch_id}.cfg")
+    interface_vlans = {}
+
+    try:
+        with open(config_file, "r") as f:
+            lines = f.readlines()
+            for line in lines[1:]:
+                parts = line.strip().split()
+                if len(parts) == 2:
+                    interface, vlan = parts
+                    interface_vlans[interface] = vlan
+    except FileNotFoundError:
+        print(f"Configuration file {config_file} not found.", flush=True)
+        sys.exit(1)
+
+    print(interface_vlans)
 
     # Initialize the CAM table
     # It's a dict with keys being the MAC addresses and values being the interface
@@ -77,11 +115,13 @@ def main():
 
         # Note. Adding a VLAN tag can be as easy as
         # tagged_frame = data[0:12] + create_vlan_tag(10) + data[12:]
-        tagged_frame = data[0:12] + create_vlan_tag(vlan_id) + data[12:]
 
         print(f"Destination MAC: {dest_mac}")
         print(f"Source MAC: {src_mac}")
         print(f"EtherType: {ethertype}")
+        if vlan_id == -1:
+            if interface_vlans[get_interface_name(interface)] != "T":
+                vlan_id = int(interface_vlans[get_interface_name(interface)])
         print(f"VLAN ID: {vlan_id}")
 
         print(
@@ -92,22 +132,16 @@ def main():
         # Add the source MAC to the CAM table
         cam_table[src_mac] = interface
 
-        if dest_mac == "ff:ff:ff:ff:ff:ff":
-            # Broadcast MAC address
+        if dest_mac == "ff:ff:ff:ff:ff:ff" or dest_mac not in cam_table:
+            # Broadcast MAC address or unknown MAC address
             for i in interfaces:
                 if i != interface:
                     send_to_link(i, length, data)
-
+                    # vlan_send_to_link(i, length, data, vlan_id)
         else:
             # If the destination MAC is in the CAM table, forward the frame
-            if dest_mac in cam_table:
-                send_to_link(cam_table[dest_mac], length, data)
-            else:
-                # The switch doesn't know where the destination MAC is
-                # Flood the frame to all interfaces except the one it was received on
-                for i in interfaces:
-                    if i != interface:
-                        send_to_link(i, length, data)
+            send_to_link(cam_table[dest_mac], length, data)
+            # vlan_send_to_link(cam_table[dest_mac], length, data, vlan_id)
 
         # for mac, interface in cam_table.items():
         #     print(f"MAC: {mac} -> Interface: {interface}")
